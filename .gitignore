@@ -1,0 +1,16 @@
+node_modules/
+
+# Build output
+dist/
+dist-electron/
+release-*/
+
+# Logs and temporary output
+*.log
+test-output.json
+
+# OS/editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
