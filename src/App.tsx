@@ -79,11 +79,15 @@ export default function App() {
       setLoading(true);
       try {
         const filesWithDimensions = await loadImageDimensions(Array.from(selectedFiles));
-        // 生成预览 URL
-        const filesWithPreview = filesWithDimensions.map(f => ({
-          ...f,
-          preview: URL.createObjectURL(f),
-        }));
+        // 生成预览 URL（显式保留 File 对象本身，避免展开丢失 name 等属性）
+        const filesWithPreview = filesWithDimensions.map(f => {
+          Object.defineProperty(f, 'preview', {
+            value: URL.createObjectURL(f),
+            writable: true,
+            enumerable: true,
+          });
+          return f;
+        });
         const sortedFiles = naturalSortPreview(filesWithPreview);
         setFiles(sortedFiles);
         setErrors([]);
@@ -109,10 +113,14 @@ export default function App() {
           return;
         }
         const filesWithDimensions = await loadImageDimensions(pngFiles);
-        const filesWithPreview = filesWithDimensions.map(f => ({
-          ...f,
-          preview: URL.createObjectURL(f),
-        }));
+        const filesWithPreview = filesWithDimensions.map(f => {
+          Object.defineProperty(f, 'preview', {
+            value: URL.createObjectURL(f),
+            writable: true,
+            enumerable: true,
+          });
+          return f;
+        });
         const sortedFiles = naturalSortPreview(filesWithPreview);
         setFiles(prev => {
           // 合并并去重
@@ -544,7 +552,7 @@ export default function App() {
                     onClick={handleExport}
                     disabled={files.length === 0 || loading}
                   >
-                    📦 导入 JSON
+                    📦 导出 JSON
                   </button>
                   {exportStatus && (
                     <span className="status-toast success">{exportStatus}</span>
