@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import {
   SequenceExportInput,
   validateInput,
@@ -14,6 +14,8 @@ import {
   removeOrphanedReferences,
   SpineJsonAnalysis,
 } from './spineJsonAnalyzer';
+
+type TabType = 'export' | 'analyze';
 
 function naturalSortPreview(files: Array<File & { width?: number; height?: number }>): Array<File & { width?: number; height?: number }> {
   const numPartRegex = /(\d+)/g;
@@ -37,9 +39,10 @@ function naturalSortPreview(files: Array<File & { width?: number; height?: numbe
 }
 
 export default function App() {
-  const [files, setFiles] = useState<Array<File & { width?: number; height?: number }>>([]);
+  const [activeTab, setActiveTab] = useState<TabType>('export');
+  const [files, setFiles] = useState<Array<File & { width?: number; height?: number; preview?: string }>>([]);
   const [animationName, setAnimationName] = useState('sequence');
-  const [fps, setFps] = useState('12');
+  const [fps, setFps] = useState('30');
   const [skeletonName, setSkeletonName] = useState('SequenceImport');
   const [imagesPath, setImagesPath] = useState('./images/');
   const [errors, setErrors] = useState<string[]>([]);
@@ -49,15 +52,26 @@ export default function App() {
   const [targetSlotName, setTargetSlotName] = useState('frameSlot');
   const [targetBoneName, setTargetBoneName] = useState('root');
   const [targetSkinName, setTargetSkinName] = useState('default');
-  const [spineCompatibilityVersion, setSpineCompatibilityVersion] = useState('4.2.0');
+  const [spineCompatibilityVersion, setSpineCompatibilityVersion] = useState('3.8.99');
   const [attachmentNameStrategy, setAttachmentNameStrategy] = useState<'basename' | 'filename'>('basename');
   const [attachmentConflictStrategy, setAttachmentConflictStrategy] = useState<'error' | 'rename'>('error');
   const [analyzeJson, setAnalyzeJson] = useState<string | null>(null);
   const [analysisResult, setAnalysisResult] = useState<SpineJsonAnalysis | null>(null);
   const [fixedJson, setFixedJson] = useState<string | null>(null);
   const [exportStatus, setExportStatus] = useState<string | null>(null);
+  const [isDragOver, setIsDragOver] = useState(false);
+  const [analyzeDragOver, setAnalyzeDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const analyzeInputRef = useRef<HTMLInputElement>(null);
+
+  // 清理预览 URL
+  useEffect(() => {
+    return () => {
+      files.forEach(f => {
+        if (f.preview) URL.revokeObjectURL(f.preview);
+      });
+    };
+  }, [files]);
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFiles = e.target.files;
@@ -65,14 +79,52 @@ export default function App() {
       setLoading(true);
       try {
         const filesWithDimensions = await loadImageDimensions(Array.from(selectedFiles));
-        const sortedFiles = naturalSortPreview(filesWithDimensions);
+        // 生成预览 URL
+        const filesWithPreview = filesWithDimensions.map(f => ({
+          ...f,
+          preview: URL.createObjectURL(f),
+        }));
+        const sortedFiles = naturalSortPreview(filesWithPreview);
         setFiles(sortedFiles);
         setErrors([]);
-        
-        console.log('图片尺寸信息:');
-        sortedFiles.forEach(file => {
-          console.log(`文件: ${file.name}, 宽: ${file.width}, 高: ${file.height}`);
+      } catch (error) {
+        setErrors([(error as Error).message]);
+      } finally {
+        setLoading(false);
+      }
+    }
+  };
+
+  const handleDrop = async (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragOver(false);
+    const droppedFiles = e.dataTransfer.files;
+    if (droppedFiles.length > 0) {
+      setLoading(true);
+      try {
+        const pngFiles = Array.from(droppedFiles).filter(f => f.name.toLowerCase().endsWith('.png'));
+        if (pngFiles.length === 0) {
+          setErrors(['请拖入 PNG 格式的图片文件']);
+          setLoading(false);
+          return;
+        }
+        const filesWithDimensions = await loadImageDimensions(pngFiles);
+        const filesWithPreview = filesWithDimensions.map(f => ({
+          ...f,
+          preview: URL.createObjectURL(f),
+        }));
+        const sortedFiles = naturalSortPreview(filesWithPreview);
+        setFiles(prev => {
+          // 合并并去重
+          const merged = [...prev, ...sortedFiles];
+          const seen = new Set<string>();
+          return merged.filter(f => {
+            if (seen.has(f.name)) return false;
+            seen.add(f.name);
+            return true;
+          });
         });
+        setErrors([]);
       } catch (error) {
         setErrors([(error as Error).message]);
       } finally {
@@ -83,7 +135,7 @@ export default function App() {
 
   const handleExport = useCallback(() => {
     setExportStatus(null);
-    
+
     const input: SequenceExportInput = {
       skeletonName,
       animationName,
@@ -107,15 +159,11 @@ export default function App() {
 
     const json = exportSequenceToSpineJson(input);
 
-    console.log('导出的 JSON:');
-    console.log(JSON.stringify(json, null, 2));
-
     setPreviewJson(JSON.stringify(json, null, 2));
     downloadJson(json, `${skeletonName}.json`);
     setErrors([]);
     setExportStatus('✓ JSON 文件已成功保存！');
-    
-    // 3秒后自动清除状态提示
+
     setTimeout(() => {
       setExportStatus(null);
     }, 3000);
@@ -141,13 +189,26 @@ export default function App() {
     }
   };
 
+  const handleAnalyzeDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setAnalyzeDragOver(false);
+    const droppedFile = e.dataTransfer.files[0];
+    if (droppedFile && droppedFile.name.toLowerCase().endsWith('.json')) {
+      const fakeEvent = {
+        target: { files: [droppedFile] },
+      } as unknown as React.ChangeEvent<HTMLInputElement>;
+      handleAnalyzeFile(fakeEvent);
+    } else {
+      setErrors(['请拖入 JSON 文件']);
+    }
+  };
+
   const handleFixAddSlots = () => {
     if (analyzeJson) {
       try {
         const json = JSON.parse(analyzeJson);
         const fixed = fixMissingSlots(json);
-        const fixedStr = JSON.stringify(fixed, null, 2);
-        setFixedJson(fixedStr);
+        setFixedJson(JSON.stringify(fixed, null, 2));
       } catch (error) {
         setErrors(['修复失败: ' + (error as Error).message]);
       }
@@ -159,8 +220,7 @@ export default function App() {
       try {
         const json = JSON.parse(analyzeJson);
         const fixed = removeOrphanedReferences(json);
-        const fixedStr = JSON.stringify(fixed, null, 2);
-        setFixedJson(fixedStr);
+        setFixedJson(JSON.stringify(fixed, null, 2));
       } catch (error) {
         setErrors(['修复失败: ' + (error as Error).message]);
       }
@@ -181,363 +241,518 @@ export default function App() {
     }
   };
 
+  const handleClearFiles = () => {
+    files.forEach(f => {
+      if (f.preview) URL.revokeObjectURL(f.preview);
+    });
+    setFiles([]);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
   return (
-    <div style={{ padding: '20px', maxWidth: '1000px', margin: '0 auto', fontFamily: 'sans-serif' }}>
-      <h1 style={{ fontSize: '18px', marginBottom: '20px' }}>Spine 序列帧导入工具</h1>
-
-      <div style={{ marginBottom: '30px', padding: '15px', border: '1px solid #ddd', borderRadius: '4px' }}>
-        <h2 style={{ fontSize: '16px', marginBottom: '15px' }}>功能一：序列帧导出</h2>
-
-        <div style={{ marginBottom: '15px' }}>
-          <label style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>
-            选择 PNG 图片（可多选）
-          </label>
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept=".png"
-            multiple
-            onChange={handleFileChange}
-            style={{ width: '100%' }}
-            disabled={loading}
-          />
-          {loading && <div style={{ fontSize: '12px', color: '#666', marginTop: '5px' }}>读取图片尺寸中...</div>}
+    <div className="app-container">
+      {/* 侧边栏 */}
+      <aside className="sidebar">
+        <div className="sidebar-header">
+          <div className="sidebar-logo">
+            <div className="sidebar-logo-icon">🦴</div>
+            <div className="sidebar-logo-text">
+              <h1>Spine 导入工具</h1>
+              <span>v0.1.0</span>
+            </div>
+          </div>
         </div>
 
-        {files.length > 0 && (
-          <div style={{ marginBottom: '15px', fontSize: '12px', color: '#666' }}>
-            <strong>已选择 {files.length} 张图片（排序后）：</strong>
-            <ul style={{ margin: '5px 0', paddingLeft: '20px' }}>
-              {files.map((f, i) => (
-                <li key={i}>
-                  {f.name} 
-                  {f.width && f.height && `(宽: ${f.width}, 高: ${f.height})`}
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
-
-        <div style={{ marginBottom: '15px' }}>
-          <label style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>
-            导出模式
-          </label>
-          <select
-            value={exportMode}
-            onChange={(e) => setExportMode(e.target.value as ExportMode)}
-            style={{ width: '100%', padding: '5px' }}
+        <nav className="sidebar-nav">
+          <div className="nav-section-title">功能模块</div>
+          <div
+            className={`nav-item ${activeTab === 'export' ? 'active' : ''}`}
+            onClick={() => setActiveTab('export')}
           >
-            <option value="new-project">新建项目 (New project)</option>
-            <option value="merge">合并到现有骨架 (Merge into project)</option>
-          </select>
-          <small style={{ color: '#666', fontSize: '11px' }}>
-            新建项目: 创建完整骨架，适合从头开始；合并模式: 只导出动画和附件，可导入到现有骨架
-          </small>
-        </div>
-
-        {exportMode === 'merge' && (
-          <>
-            <div style={{ marginBottom: '15px' }}>
-              <label style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>
-                目标 Slot 名称
-              </label>
-              <input
-                type="text"
-                value={targetSlotName}
-                onChange={(e) => setTargetSlotName(e.target.value)}
-                style={{ width: '100%', padding: '5px' }}
-                placeholder="现有骨架中 slot 的名称"
-              />
-              <small style={{ color: '#666', fontSize: '11px' }}>
-                必须与现有骨架中的 slot 名称完全匹配
-              </small>
-            </div>
-
-            <div style={{ marginBottom: '15px' }}>
-              <label style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>
-                目标 Skin 名称
-              </label>
-              <input
-                type="text"
-                value={targetSkinName}
-                onChange={(e) => setTargetSkinName(e.target.value)}
-                style={{ width: '100%', padding: '5px' }}
-                placeholder="现有骨架中 skin 的名称（通常是 default）"
-              />
-              <small style={{ color: '#666', fontSize: '11px' }}>
-                必须与现有骨架中的 skin 名称匹配
-              </small>
-            </div>
-
-            <div style={{ marginBottom: '15px' }}>
-              <label style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>
-                目标 Bone 名称
-              </label>
-              <input
-                type="text"
-                value={targetBoneName}
-                onChange={(e) => setTargetBoneName(e.target.value)}
-                style={{ width: '100%', padding: '5px' }}
-                placeholder="现有骨架中 bone 的名称"
-              />
-              <small style={{ color: '#666', fontSize: '11px' }}>
-                必须与现有骨架中的 bone 名称完全匹配（合并模式下仅用于 attachment 定位）
-              </small>
-            </div>
-          </>
-        )}
-
-        {exportMode === 'new-project' && (
-          <div style={{ marginBottom: '15px' }}>
-            <label style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>
-              Skeleton 名称
-            </label>
-            <input
-              type="text"
-              value={skeletonName}
-              onChange={(e) => setSkeletonName(e.target.value)}
-              style={{ width: '100%', padding: '5px' }}
-            />
+            <span className="nav-item-icon">📤</span>
+            <span>序列帧导入</span>
           </div>
-        )}
-
-        <div style={{ marginBottom: '15px' }}>
-          <label style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>
-            Spine 兼容版本
-          </label>
-          <input
-            type="text"
-            value={spineCompatibilityVersion}
-            onChange={(e) => setSpineCompatibilityVersion(e.target.value)}
-            style={{ width: '100%', padding: '5px' }}
-            placeholder="例如 3.8.99 / 4.0.64 / 4.2.0"
-          />
-        </div>
-
-        <div style={{ marginBottom: '15px' }}>
-          <label style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>
-            附件命名策略
-          </label>
-          <select
-            value={attachmentNameStrategy}
-            onChange={(e) => setAttachmentNameStrategy(e.target.value as 'basename' | 'filename')}
-            style={{ width: '100%', padding: '5px' }}
+          <div
+            className={`nav-item ${activeTab === 'analyze' ? 'active' : ''}`}
+            onClick={() => setActiveTab('analyze')}
           >
-            <option value="basename">去扩展名（basename）</option>
-            <option value="filename">保留完整文件名（filename）</option>
-          </select>
-        </div>
-
-        <div style={{ marginBottom: '15px' }}>
-          <label style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>
-            附件重名处理
-          </label>
-          <select
-            value={attachmentConflictStrategy}
-            onChange={(e) => setAttachmentConflictStrategy(e.target.value as 'error' | 'rename')}
-            style={{ width: '100%', padding: '5px' }}
-          >
-            <option value="error">报错并停止</option>
-            <option value="rename">自动重命名（_1, _2...）</option>
-          </select>
-        </div>
-
-        <div style={{ marginBottom: '15px' }}>
-          <label style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>
-            动画名称
-          </label>
-          <input
-            type="text"
-            value={animationName}
-            onChange={(e) => setAnimationName(e.target.value)}
-            style={{ width: '100%', padding: '5px' }}
-          />
-        </div>
-
-        <div style={{ marginBottom: '15px' }}>
-          <label style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>
-            FPS
-          </label>
-          <input
-            type="number"
-            value={fps}
-            onChange={(e) => setFps(e.target.value)}
-            min="1"
-            step="1"
-            style={{ width: '100%', padding: '5px' }}
-          />
-        </div>
-
-        <div style={{ marginBottom: '15px' }}>
-          <label style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>
-            图片路径（images path）
-          </label>
-          <input
-            type="text"
-            value={imagesPath}
-            onChange={(e) => setImagesPath(e.target.value)}
-            style={{ width: '100%', padding: '5px' }}
-          />
-          <small style={{ color: '#666', fontSize: '11px' }}>
-            在 Spine 中导入时需设置对应的图片目录
-          </small>
-        </div>
-
-        {errors.length > 0 && (
-          <div style={{ marginBottom: '15px', padding: '10px', backgroundColor: '#fee', border: '1px solid #c00', borderRadius: '4px' }}>
-            {errors.map((err, i) => (
-              <div key={i} style={{ color: '#c00', fontSize: '13px' }}>{err}</div>
-            ))}
+            <span className="nav-item-icon">🔍</span>
+            <span>JSON 分析与修复</span>
           </div>
-        )}
+        </nav>
 
-        <button
-          onClick={handleExport}
-          disabled={files.length === 0 || loading}
-          style={{
-            padding: '10px 20px',
-            fontSize: '14px',
-            cursor: (files.length === 0 || loading) ? 'not-allowed' : 'pointer',
-            opacity: (files.length === 0 || loading) ? 0.5 : 1,
-          }}
-        >
-          导出 JSON
-        </button>
-
-        {exportStatus && (
-          <div style={{
-            marginLeft: '15px',
-            display: 'inline-block',
-            padding: '8px 16px',
-            fontSize: '13px',
-            color: '#0a0',
-            backgroundColor: '#e8f5e9',
-            border: '1px solid #4caf50',
-            borderRadius: '4px',
-          }}>
-            {exportStatus}
-          </div>
-        )}
-
-        {previewJson && (
-          <div style={{ marginTop: '20px', border: '1px solid #ccc', padding: '10px', borderRadius: '4px', maxHeight: '300px', overflow: 'auto' }}>
-            <h3 style={{ fontSize: '14px', marginBottom: '10px' }}>JSON 预览</h3>
-            <pre style={{ fontSize: '11px', fontFamily: 'monospace', margin: 0 }}>{previewJson}</pre>
-          </div>
-        )}
-      </div>
-
-      <div style={{ padding: '15px', border: '1px solid #ddd', borderRadius: '4px' }}>
-        <h2 style={{ fontSize: '16px', marginBottom: '15px' }}>功能二：Spine JSON 分析与修复</h2>
-        
-        <div style={{ marginBottom: '15px' }}>
-          <label style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>
-            上传 Spine JSON 文件进行分析
-          </label>
-          <input
-            ref={analyzeInputRef}
-            type="file"
-            accept=".json"
-            onChange={handleAnalyzeFile}
-            style={{ width: '100%' }}
-          />
+        <div className="sidebar-footer">
+          Spine Sequence Importer
         </div>
+      </aside>
 
-        {analysisResult && (
-          <div style={{ marginBottom: '15px', padding: '10px', backgroundColor: '#f9f9f9', borderRadius: '4px' }}>
-            <h3 style={{ fontSize: '14px', marginBottom: '10px' }}>分析结果</h3>
-            
-            <div style={{ marginBottom: '10px', fontSize: '13px' }}>
-              <strong>已定义的 slots:</strong>
-              <div style={{ color: '#333' }}>{analysisResult.definedSlots.join(', ') || '无'}</div>
-            </div>
+      {/* 主内容区 */}
+      <main className="main-content">
+        {/* 顶部栏 */}
+        <header className="content-header">
+          <h2>{activeTab === 'export' ? '序列帧导入' : 'JSON 分析与修复'}</h2>
+          <div className="content-header-actions">
+            {files.length > 0 && activeTab === 'export' && (
+              <span style={{ fontSize: '13px', color: 'var(--text-tertiary)' }}>
+                {files.length} 张图片已加载
+              </span>
+            )}
+          </div>
+        </header>
 
-            <div style={{ marginBottom: '10px', fontSize: '13px' }}>
-              <strong>被引用的 slots:</strong>
-              <div style={{ color: '#333' }}>{analysisResult.referencedSlots.join(', ') || '无'}</div>
-            </div>
+        {/* 内容体 */}
+        <div className="content-body">
+          {/* ========== 导入功能 ========== */}
+          {activeTab === 'export' && (
+            <div className="conditional-section">
+              {/* 文件上传卡片 */}
+              <div className="card">
+                <div className="card-header">
+                  <div className="card-header-icon">🖼️</div>
+                  <div>
+                    <h3>图片资源</h3>
+                    <p>选择或拖入 PNG 序列帧图片</p>
+                  </div>
+                </div>
 
-            {analysisResult.missingSlots.length > 0 && (
-              <div style={{ marginBottom: '10px', padding: '10px', backgroundColor: '#fee', borderRadius: '4px' }}>
-                <strong style={{ color: '#c00' }}>缺失的 slots（已引用但未定义）:</strong>
-                <div style={{ color: '#c00' }}>{analysisResult.missingSlots.join(', ')}</div>
+                <div
+                  className={`file-drop-zone ${isDragOver ? 'dragover' : ''}`}
+                  onDragOver={(e) => { e.preventDefault(); setIsDragOver(true); }}
+                  onDragLeave={() => setIsDragOver(false)}
+                  onDrop={handleDrop}
+                  onClick={() => fileInputRef.current?.click()}
+                >
+                  <div className="file-drop-zone-icon">📁</div>
+                  <div className="file-drop-zone-text">
+                    {files.length === 0 ? (
+                      <>点击选择 或 <strong>拖入 PNG 图片</strong></>
+                    ) : (
+                      <>已选择 {files.length} 张图片，点击或拖入可追加</>
+                    )}
+                  </div>
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept=".png"
+                    multiple
+                    onChange={handleFileChange}
+                    style={{ display: 'none' }}
+                    disabled={loading}
+                  />
+                </div>
+
+                {loading && (
+                  <div className="loading-text">
+                    <span className="loading-spinner"></span>
+                    读取图片尺寸中...
+                  </div>
+                )}
+
+                {/* 图片预览网格 */}
+                {files.length > 0 && (
+                  <div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '16px', marginBottom: '8px' }}>
+                      <span style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>预览（自然排序）</span>
+                      <button className="btn btn-secondary btn-sm" onClick={handleClearFiles}>清空</button>
+                    </div>
+                    <div className="thumbnail-grid">
+                      {files.map((f, i) => (
+                        <div key={f.name + i} className="thumbnail-item" title={f.name}>
+                          <img src={f.preview} alt={f.name} />
+                          <span className="thumbnail-index">{i + 1}</span>
+                          {f.width && f.height && (
+                            <span className="thumbnail-size">{f.width}×{f.height}</span>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
-            )}
 
-            {analysisResult.orphanedReferences.length > 0 && (
-              <div style={{ marginBottom: '10px' }}>
-                <strong style={{ color: '#c00' }}>非法引用位置:</strong>
-                <ul style={{ margin: '5px 0', paddingLeft: '20px', color: '#c00', fontSize: '12px' }}>
-                  {analysisResult.orphanedReferences.map((ref, i) => (
-                    <li key={i}>
-                      <strong>{ref.location}</strong>: {ref.fullPath} {'->'} {ref.slotName}
-                    </li>
-                  ))}
-                </ul>
+              {/* 导入设置卡片 */}
+              <div className="card">
+                <div className="card-header">
+                  <div className="card-header-icon">⚙️</div>
+                  <div>
+                    <h3>导入设置</h3>
+                    <p>配置 Spine JSON 导入参数</p>
+                  </div>
+                </div>
+
+                {/* 导入模式 */}
+                <div className="form-group">
+                  <label className="form-label">导入模式</label>
+                  <select
+                    className="form-select"
+                    value={exportMode}
+                    onChange={(e) => setExportMode(e.target.value as ExportMode)}
+                  >
+                    <option value="new-project">新建项目 (New project)</option>
+                    <option value="merge">合并到现有骨架 (Merge into project)</option>
+                  </select>
+                  <div className="form-hint">
+                    新建项目：创建完整骨架，适合从头开始；合并模式：只导入动画和附件，可合并到现有骨架
+                  </div>
+                </div>
+
+                {/* 合并模式专属字段 */}
+                {exportMode === 'merge' && (
+                  <div className="conditional-section">
+                    <div className="form-row">
+                      <div className="form-group">
+                        <label className="form-label">目标 Slot 名称</label>
+                        <input
+                          className="form-input"
+                          type="text"
+                          value={targetSlotName}
+                          onChange={(e) => setTargetSlotName(e.target.value)}
+                          placeholder="现有骨架中 slot 的名称"
+                        />
+                        <div className="form-hint">必须与现有骨架中的 slot 名称完全匹配</div>
+                      </div>
+                      <div className="form-group">
+                        <label className="form-label">目标 Skin 名称</label>
+                        <input
+                          className="form-input"
+                          type="text"
+                          value={targetSkinName}
+                          onChange={(e) => setTargetSkinName(e.target.value)}
+                          placeholder="通常是 default"
+                        />
+                        <div className="form-hint">必须与现有骨架中的 skin 名称匹配</div>
+                      </div>
+                    </div>
+                    <div className="form-group">
+                      <label className="form-label">目标 Bone 名称</label>
+                      <input
+                        className="form-input"
+                        type="text"
+                        value={targetBoneName}
+                        onChange={(e) => setTargetBoneName(e.target.value)}
+                        placeholder="现有骨架中 bone 的名称"
+                      />
+                      <div className="form-hint">必须与现有骨架中的 bone 名称完全匹配</div>
+                    </div>
+                  </div>
+                )}
+
+                {/* 新建项目专属字段 */}
+                {exportMode === 'new-project' && (
+                  <div className="conditional-section">
+                    <div className="form-group">
+                      <label className="form-label">Skeleton 名称</label>
+                      <input
+                        className="form-input"
+                        type="text"
+                        value={skeletonName}
+                        onChange={(e) => setSkeletonName(e.target.value)}
+                      />
+                    </div>
+                  </div>
+                )}
+
+                <div className="divider"></div>
+
+                <div className="form-row">
+                  <div className="form-group">
+                    <label className="form-label">Spine 兼容版本</label>
+                    <input
+                      className="form-input"
+                      type="text"
+                      value={spineCompatibilityVersion}
+                      onChange={(e) => setSpineCompatibilityVersion(e.target.value)}
+                      placeholder="例如 3.8.99 / 4.0.64 / 4.2.0"
+                    />
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">动画名称</label>
+                    <input
+                      className="form-input"
+                      type="text"
+                      value={animationName}
+                      onChange={(e) => setAnimationName(e.target.value)}
+                    />
+                  </div>
+                </div>
+
+                <div className="form-row">
+                  <div className="form-group">
+                    <label className="form-label">FPS（帧率）</label>
+                    <input
+                      className="form-input"
+                      type="number"
+                      value={fps}
+                      onChange={(e) => setFps(e.target.value)}
+                      min="1"
+                      step="1"
+                    />
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">图片路径（images path）</label>
+                    <input
+                      className="form-input"
+                      type="text"
+                      value={imagesPath}
+                      onChange={(e) => setImagesPath(e.target.value)}
+                      placeholder="./images/"
+                    />
+                  </div>
+                </div>
+
+                <div className="form-row">
+                  <div className="form-group">
+                    <label className="form-label">附件命名策略</label>
+                    <select
+                      className="form-select"
+                      value={attachmentNameStrategy}
+                      onChange={(e) => setAttachmentNameStrategy(e.target.value as 'basename' | 'filename')}
+                    >
+                      <option value="basename">去扩展名（basename）</option>
+                      <option value="filename">保留完整文件名（filename）</option>
+                    </select>
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">附件重名处理</label>
+                    <select
+                      className="form-select"
+                      value={attachmentConflictStrategy}
+                      onChange={(e) => setAttachmentConflictStrategy(e.target.value as 'error' | 'rename')}
+                    >
+                      <option value="error">报错并停止</option>
+                      <option value="rename">自动重命名（_1, _2...）</option>
+                    </select>
+                  </div>
+                </div>
+
+                {/* 错误提示 */}
+                {errors.length > 0 && (
+                  <div className="error-list">
+                    {errors.map((err, i) => (
+                      <div key={i} className="error-item">
+                        <span className="error-item-icon">⚠️</span>
+                        <span>{err}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* 操作按钮 */}
+                <div className="btn-group">
+                  <button
+                    className="btn btn-primary"
+                    onClick={handleExport}
+                    disabled={files.length === 0 || loading}
+                  >
+                    📦 导入 JSON
+                  </button>
+                  {exportStatus && (
+                    <span className="status-toast success">{exportStatus}</span>
+                  )}
+                </div>
               </div>
-            )}
 
-            <div style={{ marginBottom: '10px', padding: '10px', backgroundColor: '#fff', borderRadius: '4px', border: '1px solid #ddd' }}>
-              <strong style={{ fontSize: '13px' }}>详细分析报告:</strong>
-              <pre style={{ fontSize: '11px', fontFamily: 'monospace', margin: '5px 0 0 0', whiteSpace: 'pre-wrap' }}>
-                {analysisResult.detailedReport}
-              </pre>
+              {/* JSON 预览 */}
+              {previewJson && (
+                <div className="card conditional-section">
+                  <div className="json-preview">
+                    <div className="json-preview-header">
+                      <h4>📋 JSON 预览</h4>
+                    </div>
+                    <div className="json-preview-body">
+                      <pre>{previewJson}</pre>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
+          )}
 
-            {analysisResult.missingSlots.length === 0 && (
-              <div style={{ color: '#0a0', fontSize: '13px' }}>✓ 未发现缺失的 slot 引用</div>
-            )}
-          </div>
-        )}
+          {/* ========== JSON 分析与修复 ========== */}
+          {activeTab === 'analyze' && (
+            <div className="conditional-section">
+              {/* 文件上传 */}
+              <div className="card">
+                <div className="card-header">
+                  <div className="card-header-icon">📂</div>
+                  <div>
+                    <h3>上传 Spine JSON</h3>
+                    <p>拖入或选择需要分析的 skeleton JSON 文件</p>
+                  </div>
+                </div>
 
-        {analysisResult && analysisResult.missingSlots.length > 0 && (
-          <div style={{ marginBottom: '15px' }}>
-            <button
-              onClick={handleFixAddSlots}
-              style={{
-                padding: '8px 16px',
-                fontSize: '13px',
-                marginRight: '10px',
-                cursor: 'pointer',
-              }}
-            >
-              修复方案一：补全缺失的 slots
-            </button>
-            <button
-              onClick={handleFixRemoveReferences}
-              style={{
-                padding: '8px 16px',
-                fontSize: '13px',
-                cursor: 'pointer',
-              }}
-            >
-              修复方案二：删除非法引用
-            </button>
-          </div>
-        )}
+                <div
+                  className={`file-drop-zone ${analyzeDragOver ? 'dragover' : ''}`}
+                  onDragOver={(e) => { e.preventDefault(); setAnalyzeDragOver(true); }}
+                  onDragLeave={() => setAnalyzeDragOver(false)}
+                  onDrop={handleAnalyzeDrop}
+                  onClick={() => analyzeInputRef.current?.click()}
+                >
+                  <div className="file-drop-zone-icon">📄</div>
+                  <div className="file-drop-zone-text">
+                    点击选择 或 <strong>拖入 JSON 文件</strong>
+                  </div>
+                  <input
+                    ref={analyzeInputRef}
+                    type="file"
+                    accept=".json"
+                    onChange={handleAnalyzeFile}
+                    style={{ display: 'none' }}
+                  />
+                </div>
+              </div>
 
-        {fixedJson && (
-          <div style={{ marginBottom: '15px' }}>
-            <div style={{ marginBottom: '10px' }}>
-              <h3 style={{ fontSize: '14px', marginBottom: '10px' }}>修复后的 JSON</h3>
-              <button
-                onClick={handleDownloadFixed}
-                style={{
-                  padding: '8px 16px',
-                  fontSize: '13px',
-                  cursor: 'pointer',
-                  marginBottom: '10px',
-                }}
-              >
-                下载修复后的 JSON
-              </button>
+              {/* 分析结果 */}
+              {analysisResult && (
+                <div className="card conditional-section">
+                  <div className="card-header">
+                    <div className="card-header-icon">📊</div>
+                    <div>
+                      <h3>分析报告</h3>
+                      <p>Slot 引用关系检测</p>
+                    </div>
+                  </div>
+
+                  {/* 统计 */}
+                  <div className="stats-grid">
+                    <div className="stat-card">
+                      <div className="stat-value">{analysisResult.definedSlots.length}</div>
+                      <div className="stat-label">已定义 slots</div>
+                    </div>
+                    <div className="stat-card">
+                      <div className="stat-value">{analysisResult.referencedSlots.length}</div>
+                      <div className="stat-label">被引用 slots</div>
+                    </div>
+                    <div className="stat-card">
+                      <div className="stat-value" style={{ color: analysisResult.missingSlots.length > 0 ? 'var(--error)' : 'var(--success)' }}>
+                        {analysisResult.missingSlots.length}
+                      </div>
+                      <div className="stat-label">缺失 slots</div>
+                    </div>
+                  </div>
+
+                  {/* 已定义 slots */}
+                  <div className="analysis-section">
+                    <div className="analysis-section-title">已定义的 slots</div>
+                    <div className="analysis-tags">
+                      {analysisResult.definedSlots.length > 0 ? (
+                        analysisResult.definedSlots.map(s => (
+                          <span key={s} className="analysis-tag success">{s}</span>
+                        ))
+                      ) : (
+                        <span style={{ fontSize: '12px', color: 'var(--text-tertiary)' }}>无</span>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* 被引用 slots */}
+                  <div className="analysis-section">
+                    <div className="analysis-section-title">被引用的 slots</div>
+                    <div className="analysis-tags">
+                      {analysisResult.referencedSlots.length > 0 ? (
+                        analysisResult.referencedSlots.map(s => (
+                          <span key={s} className="analysis-tag">{s}</span>
+                        ))
+                      ) : (
+                        <span style={{ fontSize: '12px', color: 'var(--text-tertiary)' }}>无</span>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* 缺失 slots */}
+                  {analysisResult.missingSlots.length > 0 && (
+                    <div className="analysis-section">
+                      <div className="analysis-section-title" style={{ color: 'var(--error)' }}>
+                        ⚠️ 缺失的 slots（已引用但未定义）
+                      </div>
+                      <div className="analysis-tags">
+                        {analysisResult.missingSlots.map(s => (
+                          <span key={s} className="analysis-tag danger">{s}</span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* 非法引用 */}
+                  {analysisResult.orphanedReferences.length > 0 && (
+                    <div className="analysis-section">
+                      <div className="analysis-section-title" style={{ color: 'var(--error)' }}>
+                        ⚠️ 非法引用位置
+                      </div>
+                      <div style={{ fontSize: '12px', color: 'var(--text-secondary)', paddingLeft: '16px' }}>
+                        {analysisResult.orphanedReferences.map((ref, i) => (
+                          <div key={i} style={{ padding: '4px 0', fontFamily: 'monospace' }}>
+                            <span style={{ color: 'var(--warning)' }}>{ref.location}</span>: {ref.fullPath} → {ref.slotName}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* 详细报告 */}
+                  <div className="json-preview" style={{ marginTop: '16px' }}>
+                    <div className="json-preview-header">
+                      <h4>📝 详细分析报告</h4>
+                    </div>
+                    <div className="json-preview-body">
+                      <pre style={{ whiteSpace: 'pre-wrap' }}>{analysisResult.detailedReport}</pre>
+                    </div>
+                  </div>
+
+                  {/* 成功提示 */}
+                  {analysisResult.missingSlots.length === 0 && analysisResult.orphanedReferences.length === 0 && (
+                    <div style={{ marginTop: '16px', padding: '12px 16px', background: 'var(--success-bg)', border: '1px solid var(--success-border)', borderRadius: 'var(--radius-md)', color: 'var(--success)', fontSize: '13px' }}>
+                      ✓ 未发现缺失的 slot 引用，JSON 结构完整
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* 修复按钮 */}
+              {analysisResult && analysisResult.missingSlots.length > 0 && (
+                <div className="card conditional-section">
+                  <div className="card-header">
+                    <div className="card-header-icon">🔧</div>
+                    <div>
+                      <h3>修复方案</h3>
+                      <p>选择一种方式修复 JSON 问题</p>
+                    </div>
+                  </div>
+                  <div className="btn-group">
+                    <button className="btn btn-success" onClick={handleFixAddSlots}>
+                      ➕ 补全缺失的 slots
+                    </button>
+                    <button className="btn btn-warning" onClick={handleFixRemoveReferences}>
+                      🗑️ 删除非法引用
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* 修复结果 */}
+              {fixedJson && (
+                <div className="card conditional-section">
+                  <div className="card-header">
+                    <div className="card-header-icon">✅</div>
+                    <div>
+                      <h3>修复后的 JSON</h3>
+                      <p>检查无误后可下载</p>
+                    </div>
+                  </div>
+                  <button className="btn btn-primary" onClick={handleDownloadFixed} style={{ marginBottom: '16px' }}>
+                    💾 下载修复后的 JSON
+                  </button>
+                  <div className="json-preview">
+                    <div className="json-preview-body">
+                      <pre>{fixedJson}</pre>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
-            <div style={{ border: '1px solid #ccc', padding: '10px', borderRadius: '4px', maxHeight: '300px', overflow: 'auto' }}>
-              <pre style={{ fontSize: '11px', fontFamily: 'monospace', margin: 0 }}>{fixedJson}</pre>
-            </div>
-          </div>
-        )}
-      </div>
+          )}
+        </div>
+      </main>
     </div>
   );
 }

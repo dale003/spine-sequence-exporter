@@ -40,11 +40,12 @@ app.commandLine.appendSwitch('disable-renderer-backgrounding')
 function createWindow() {
   writeLog('Creating main window')
   mainWindow = new BrowserWindow({
-    width: 1200,
-    height: 900,
-    minWidth: 900,
-    minHeight: 650,
-    title: 'Spine 序列帧导出工具',
+    width: 1280,
+    height: 850,
+    minWidth: 1000,
+    minHeight: 680,
+    title: 'Spine 序列帧导入工具',
+    backgroundColor: '#0f1117',
     show: false,
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
