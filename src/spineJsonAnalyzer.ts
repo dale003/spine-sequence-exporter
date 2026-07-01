@@ -11,6 +11,52 @@ export interface SpineJsonAnalysis {
   detailedReport: string;
 }
 
+type SkinRef = {
+  skinName: string;
+  slotName: string;
+  fullPath: string;
+};
+
+function isSkinsArray(skins: unknown): skins is Array<{ name?: string; attachments?: Record<string, unknown> }> {
+  return Array.isArray(skins);
+}
+
+function collectSkinRefs(skins: unknown): SkinRef[] {
+  const refs: SkinRef[] = [];
+  if (isSkinsArray(skins)) {
+    skins.forEach((skin, skinIndex) => {
+      const skinName = (skin && typeof skin.name === 'string') ? skin.name : String(skinIndex);
+      const attachments = (skin && typeof skin === 'object' && 'attachments' in skin)
+        ? (skin as { attachments?: Record<string, unknown> }).attachments
+        : undefined;
+      if (attachments && typeof attachments === 'object') {
+        Object.keys(attachments).forEach((slotName) => {
+          refs.push({
+            skinName,
+            slotName,
+            fullPath: `skins.${skinName}.${slotName}`,
+          });
+        });
+      }
+    });
+  } else if (skins && typeof skins === 'object') {
+    const skinsObj = skins as Record<string, Record<string, unknown>>;
+    Object.keys(skinsObj).forEach((skinName) => {
+      const skin = skinsObj[skinName];
+      if (skin && typeof skin === 'object') {
+        Object.keys(skin).forEach((slotName) => {
+          refs.push({
+            skinName,
+            slotName,
+            fullPath: `skins.${skinName}.${slotName}`,
+          });
+        });
+      }
+    });
+  }
+  return refs;
+}
+
 export function analyzeSpineJson(json: Record<string, unknown>): SpineJsonAnalysis {
   const definedSlots: string[] = [];
   const referencedSlots: string[] = [];
@@ -44,14 +90,10 @@ export function analyzeSpineJson(json: Record<string, unknown>): SpineJsonAnalys
 
   if (json.skins) {
     detailedReport += '=== skins 中的 slot 引用 ===\n';
-    const skins = json.skins as Record<string, Record<string, unknown>>;
-    Object.keys(skins).forEach((skinName) => {
-      const skin = skins[skinName] as Record<string, unknown>;
-      Object.keys(skin).forEach((slotName) => {
-        const fullPath = `skins.${skinName}.${slotName}`;
-        detailedReport += `  ${fullPath} -> ${slotName}\n`;
-        addReference('skins', `${skinName}.${slotName}`, fullPath, slotName);
-      });
+    const skinRefs = collectSkinRefs(json.skins);
+    skinRefs.forEach(({ skinName, slotName, fullPath }) => {
+      detailedReport += `  ${fullPath} -> ${slotName}\n`;
+      addReference('skins', `${skinName}.${slotName}`, fullPath, slotName);
     });
     detailedReport += '\n';
   }
@@ -193,10 +235,18 @@ export function removeOrphanedReferences(json: Record<string, unknown>): Record<
     try {
       if (ref.location === 'skins') {
         const [skinName, slotName] = ref.path.split('.');
-        if (fixedJson.skins && 
-            (fixedJson.skins as Record<string, unknown>)[skinName] &&
-            (fixedJson.skins as Record<string, Record<string, unknown>>)[skinName][slotName]) {
-          delete (fixedJson.skins as Record<string, Record<string, unknown>>)[skinName][slotName];
+        const skins = fixedJson.skins as unknown;
+        if (isSkinsArray(skins)) {
+          skins.forEach((skin) => {
+            if (skin && skin.name === skinName && skin.attachments && skin.attachments[slotName]) {
+              delete skin.attachments[slotName];
+            }
+          });
+        } else if (skins && typeof skins === 'object') {
+          const skinsObj = skins as Record<string, Record<string, unknown>>;
+          if (skinsObj[skinName] && skinsObj[skinName][slotName]) {
+            delete skinsObj[skinName][slotName];
+          }
         }
       } else if (ref.location === 'animations') {
         const parts = ref.path.split('.');

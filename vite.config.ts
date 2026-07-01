@@ -7,6 +7,9 @@ export default defineConfig(({ mode }) => {
   const isElectron = mode === 'electron'
 
   return {
+    optimizeDeps: {
+      entries: ['index.html'],
+    },
     plugins: [
       react(),
       ...(isElectron

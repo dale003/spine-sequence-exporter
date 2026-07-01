@@ -89,7 +89,17 @@ export default function App() {
           return f;
         });
         const sortedFiles = naturalSortPreview(filesWithPreview);
-        setFiles(sortedFiles);
+        setFiles(prev => {
+          // 合并并去重（与拖入逻辑一致，保留已有图片优先）
+          const merged = [...prev, ...sortedFiles];
+          const seen = new Set<string>();
+          const mergedFiles = merged.filter(f => {
+            if (seen.has(f.name)) return false;
+            seen.add(f.name);
+            return true;
+          });
+          return naturalSortPreview(mergedFiles);
+        });
         setErrors([]);
       } catch (error) {
         setErrors([(error as Error).message]);
@@ -123,14 +133,15 @@ export default function App() {
         });
         const sortedFiles = naturalSortPreview(filesWithPreview);
         setFiles(prev => {
-          // 合并并去重
+          // 合并并去重，再按文件名自然排序（与点击上传逻辑一致）
           const merged = [...prev, ...sortedFiles];
           const seen = new Set<string>();
-          return merged.filter(f => {
+          const mergedFiles = merged.filter(f => {
             if (seen.has(f.name)) return false;
             seen.add(f.name);
             return true;
           });
+          return naturalSortPreview(mergedFiles);
         });
         setErrors([]);
       } catch (error) {
