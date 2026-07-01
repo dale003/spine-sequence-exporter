@@ -6,7 +6,6 @@ import {
   downloadJson,
   ValidationError,
   loadImageDimensions,
-  ExportMode,
 } from './sequenceSpineExporter';
 import {
   analyzeSpineJson,
@@ -48,10 +47,6 @@ export default function App() {
   const [errors, setErrors] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [previewJson, setPreviewJson] = useState<string | null>(null);
-  const [exportMode, setExportMode] = useState<ExportMode>('new-project');
-  const [targetSlotName, setTargetSlotName] = useState('frameSlot');
-  const [targetBoneName, setTargetBoneName] = useState('root');
-  const [targetSkinName, setTargetSkinName] = useState('default');
   const [spineCompatibilityVersion, setSpineCompatibilityVersion] = useState('3.8.99');
   const [attachmentNameStrategy, setAttachmentNameStrategy] = useState<'basename' | 'filename'>('basename');
   const [attachmentConflictStrategy, setAttachmentConflictStrategy] = useState<'error' | 'rename'>('error');
@@ -161,10 +156,6 @@ export default function App() {
       fps: parseFloat(fps),
       imagesPath,
       files,
-      exportMode,
-      targetSlotName: exportMode === 'merge' ? targetSlotName : 'frameSlot',
-      targetBoneName: exportMode === 'merge' ? targetBoneName : 'root',
-      targetSkinName,
       spineCompatibilityVersion,
       attachmentNameStrategy,
       attachmentConflictStrategy,
@@ -186,7 +177,7 @@ export default function App() {
     setTimeout(() => {
       setExportStatus(null);
     }, 3000);
-  }, [skeletonName, animationName, fps, imagesPath, files, exportMode, targetSlotName, targetBoneName, targetSkinName, spineCompatibilityVersion, attachmentNameStrategy, attachmentConflictStrategy]);
+  }, [skeletonName, animationName, fps, imagesPath, files, spineCompatibilityVersion, attachmentNameStrategy, attachmentConflictStrategy]);
 
   const handleAnalyzeFile = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -399,77 +390,16 @@ export default function App() {
                   </div>
                 </div>
 
-                {/* 导入模式 */}
+                {/* Skeleton 名称 */}
                 <div className="form-group">
-                  <label className="form-label">导入模式</label>
-                  <select
-                    className="form-select"
-                    value={exportMode}
-                    onChange={(e) => setExportMode(e.target.value as ExportMode)}
-                  >
-                    <option value="new-project">新建项目 (New project)</option>
-                    <option value="merge">合并到现有骨架 (Merge into project)</option>
-                  </select>
-                  <div className="form-hint">
-                    新建项目：创建完整骨架，适合从头开始；合并模式：只导入动画和附件，可合并到现有骨架
-                  </div>
+                  <label className="form-label">Skeleton 名称</label>
+                  <input
+                    className="form-input"
+                    type="text"
+                    value={skeletonName}
+                    onChange={(e) => setSkeletonName(e.target.value)}
+                  />
                 </div>
-
-                {/* 合并模式专属字段 */}
-                {exportMode === 'merge' && (
-                  <div className="conditional-section">
-                    <div className="form-row">
-                      <div className="form-group">
-                        <label className="form-label">目标 Slot 名称</label>
-                        <input
-                          className="form-input"
-                          type="text"
-                          value={targetSlotName}
-                          onChange={(e) => setTargetSlotName(e.target.value)}
-                          placeholder="现有骨架中 slot 的名称"
-                        />
-                        <div className="form-hint">必须与现有骨架中的 slot 名称完全匹配</div>
-                      </div>
-                      <div className="form-group">
-                        <label className="form-label">目标 Skin 名称</label>
-                        <input
-                          className="form-input"
-                          type="text"
-                          value={targetSkinName}
-                          onChange={(e) => setTargetSkinName(e.target.value)}
-                          placeholder="通常是 default"
-                        />
-                        <div className="form-hint">必须与现有骨架中的 skin 名称匹配</div>
-                      </div>
-                    </div>
-                    <div className="form-group">
-                      <label className="form-label">目标 Bone 名称</label>
-                      <input
-                        className="form-input"
-                        type="text"
-                        value={targetBoneName}
-                        onChange={(e) => setTargetBoneName(e.target.value)}
-                        placeholder="现有骨架中 bone 的名称"
-                      />
-                      <div className="form-hint">必须与现有骨架中的 bone 名称完全匹配</div>
-                    </div>
-                  </div>
-                )}
-
-                {/* 新建项目专属字段 */}
-                {exportMode === 'new-project' && (
-                  <div className="conditional-section">
-                    <div className="form-group">
-                      <label className="form-label">Skeleton 名称</label>
-                      <input
-                        className="form-input"
-                        type="text"
-                        value={skeletonName}
-                        onChange={(e) => setSkeletonName(e.target.value)}
-                      />
-                    </div>
-                  </div>
-                )}
 
                 <div className="divider"></div>
 

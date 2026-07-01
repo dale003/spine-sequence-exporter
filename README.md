@@ -2,13 +2,13 @@
 
 Spine Sequence Exporter is a Windows-focused tool for converting PNG image sequences into Spine-compatible JSON animation data.
 
-It supports creating a new Spine JSON project from image frames, merging frame attachments into an existing skeleton structure, and checking or repairing common Spine JSON reference issues.
+It supports creating a new Spine JSON project from image frames and checking or repairing common Spine JSON reference issues.
 
 ## Features
 
 - Import PNG sequence frames and sort them naturally by file name.
 - Export Spine-compatible JSON animation data.
-- Configure skeleton name, animation name, FPS, image path, target slot, target bone, skin, and Spine compatibility version.
+- Configure skeleton name, animation name, FPS, image path, and Spine compatibility version.
 - Preview generated JSON before use.
 - Analyze Spine JSON files for missing slots and orphaned references.
 - Build as a web app, Electron installer, portable package, or standalone offline HTML file.

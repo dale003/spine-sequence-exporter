@@ -1,4 +1,3 @@
-export type ExportMode = 'new-project' | 'merge';
 export type AttachmentNameStrategy = 'basename' | 'filename';
 export type AttachmentConflictStrategy = 'error' | 'rename';
 
@@ -8,10 +7,6 @@ export interface SequenceExportInput {
   fps: number;
   imagesPath: string;
   files: Array<File & { width?: number; height?: number }>;
-  exportMode: ExportMode;
-  targetSlotName: string;
-  targetBoneName: string;
-  targetSkinName: string;
   spineCompatibilityVersion: string;
   attachmentNameStrategy: AttachmentNameStrategy;
   attachmentConflictStrategy: AttachmentConflictStrategy;
@@ -87,14 +82,6 @@ export function validateInput(input: SequenceExportInput): ValidationError[] {
     errors.push({ field: 'animationName', message: '动画名称不能为空' });
   }
 
-  if (!input.targetSlotName.trim()) {
-    errors.push({ field: 'targetSlotName', message: '目标 Slot 名称不能为空' });
-  }
-
-  if (!input.targetSkinName.trim()) {
-    errors.push({ field: 'targetSkinName', message: '目标 Skin 名称不能为空' });
-  }
-
   if (!input.spineCompatibilityVersion.trim()) {
     errors.push({ field: 'spineCompatibilityVersion', message: 'Spine 兼容版本不能为空' });
   }
@@ -145,9 +132,9 @@ export function loadImageDimensions(files: File[]): Promise<Array<File & { width
 export function exportSequenceToSpineJson(input: SequenceExportInput): Record<string, unknown> {
   const sortedFiles = [...input.files].sort((a, b) => naturalSort(a.name, b.name));
 
-  const slotName = input.targetSlotName || 'frameSlot';
-  const boneName = input.targetBoneName || 'root';
-  const skinName = input.targetSkinName || 'default';
+  const slotName = 'frameSlot';
+  const boneName = 'root';
+  const skinName = 'default';
   const isSpine38 = input.spineCompatibilityVersion.trim().startsWith('3.8');
 
   const skinAttachmentsBySlot: Record<string, Record<string, unknown>> = {
@@ -155,6 +142,13 @@ export function exportSequenceToSpineJson(input: SequenceExportInput): Record<st
   };
 
   const spineJson: SpineJson = {
+    skeleton: {
+      spine: input.spineCompatibilityVersion,
+      hash: '',
+      imagesPath: input.imagesPath,
+    },
+    bones: [{ name: boneName }],
+    slots: [{ name: slotName, bone: boneName, attachment: null }],
     skins: isSpine38
       ? [
           {
@@ -167,20 +161,6 @@ export function exportSequenceToSpineJson(input: SequenceExportInput): Record<st
         },
     animations: {},
   };
-
-  if (input.exportMode === 'new-project') {
-    spineJson.skeleton = {
-      spine: input.spineCompatibilityVersion,
-      hash: '',
-      imagesPath: input.imagesPath,
-    };
-    spineJson.bones = [{ name: boneName }];
-    spineJson.slots = [{ name: slotName, bone: boneName, attachment: null }];
-  } else {
-    // Merge 模式也补充最小 slot/bone 定义，避免旧版 Spine 解析动画时出现 Slot not found。
-    spineJson.bones = [{ name: boneName }];
-    spineJson.slots = [{ name: slotName, bone: boneName, attachment: null }];
-  }
 
   const usedAttachmentNames = new Set<string>();
   const makeUniqueAttachmentName = (baseName: string): string => {
